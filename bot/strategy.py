@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 
@@ -71,6 +72,20 @@ def _evaluate_confirmation(
     breakout_short_ok = cur["close"] <= recent["low"].min()
     return momentum_long_ok, momentum_short_ok, breakout_long_ok, breakout_short_ok
 
+
+def _evaluate_volume_flow(cur: pd.Series) -> tuple[bool, bool]:
+    obv = cur.get("obv")
+    obv_signal = cur.get("obv_signal")
+    if pd.isna(obv) or pd.isna(obv_signal):
+        return False, False
+    long_ok = obv > obv_signal
+    short_ok = obv < obv_signal
+    return long_ok, short_ok
+
+
+def _count_true(flags: list[bool]) -> int:
+    return sum(1 for flag in flags if flag)
+
 def calculate_indicators(
     df: pd.DataFrame,
     ema_fast: int,
@@ -79,6 +94,10 @@ def calculate_indicators(
     rsi_period: int,
     stoch_k_period: int,
     stoch_d_period: int,
+    macd_fast: int,
+    macd_slow: int,
+    macd_signal: int,
+    obv_smoothing: int,
 ) -> pd.DataFrame:
     """Compute EMA and ATR indicators.
 
@@ -105,32 +124,57 @@ def calculate_indicators(
     result["atr"] = true_range.rolling(window=atr_period).mean()
     result["rsi"] = _calculate_rsi(result["close"], rsi_period)
     stoch_df = _calculate_stochastic(result, stoch_k_period, stoch_d_period)
-    result = pd.concat([result, stoch_df], axis=1)
+    ema_macd_fast = result["close"].ewm(span=macd_fast, adjust=False).mean()
+    ema_macd_slow = result["close"].ewm(span=macd_slow, adjust=False).mean()
+    macd_line = ema_macd_fast - ema_macd_slow
+    macd_signal_line = macd_line.ewm(span=macd_signal, adjust=False).mean()
+    macd_hist = macd_line - macd_signal_line
+
+    price_diff = result["close"].diff().fillna(0.0)
+    direction = np.sign(price_diff)
+    obv = (direction * result["volume"]).cumsum()
+    obv_signal = obv.ewm(span=max(1, obv_smoothing), adjust=False).mean()
+
+    result = pd.concat(
+        [
+            result,
+            stoch_df,
+            pd.DataFrame(
+                {
+                    "macd_line": macd_line,
+                    "macd_signal": macd_signal_line,
+                    "macd_hist": macd_hist,
+                    "obv": obv,
+                    "obv_signal": obv_signal,
+                },
+                index=result.index,
+            ),
+        ],
+        axis=1,
+    )
     return result
 
 
 def generate_signal(
     df: pd.DataFrame,
     config: dict,
-    current_position: Optional[str] = None,
+    _current_position: Optional[str] = None,
 ) -> dict:
-    """Generate a trading signal based on EMA and ATR.
+    """Generate trading signals based on EMA, ATR, and confirmation indicators.
 
     Args:
         df: DataFrame containing at least the most recent two rows with indicators.
         config: Scenario configuration dictionary with keys: ema_fast, ema_slow,
-            atr_period, risk_reward_ratio.
-        current_position: 'LONG', 'SHORT' or None indicating existing position.
+            atr_period, risk_reward_ratio, etc.
+        current_position: Kept for backward compatibility (ignored).
 
     Returns:
         A dictionary with keys:
-            action: 'OPEN_LONG', 'OPEN_SHORT' or 'HOLD'
-            entry_price: the close price of the latest candle
-            stop_distance: recommended stop‑loss distance (ATR)
-            take_distance: recommended take‑profit distance (ATR * risk_reward_ratio)
+            actions: list of zero, one, or two entries describing orders to place.
+            action: legacy single-action string for compatibility ('HOLD' when no entries).
     """
     if len(df) < 3:
-        return {"action": "HOLD"}
+        return {"action": "HOLD", "actions": []}
 
     # Compute indicators
     ema_fast = config["ema_fast"]
@@ -139,6 +183,12 @@ def generate_signal(
     rsi_period = config.get("rsi_period", 14)
     stoch_k_period = config.get("stoch_k_period", 14)
     stoch_d_period = config.get("stoch_d_period", 3)
+    macd_fast = config.get("macd_fast", 12)
+    macd_slow = config.get("macd_slow", 26)
+    macd_signal = config.get("macd_signal", 9)
+    obv_smoothing = config.get("obv_smoothing", 10)
+    allow_long = config.get("allow_long", True)
+    allow_short = config.get("allow_short", True)
     enriched = calculate_indicators(
         df,
         ema_fast,
@@ -147,6 +197,10 @@ def generate_signal(
         rsi_period,
         stoch_k_period,
         stoch_d_period,
+        macd_fast,
+        macd_slow,
+        macd_signal,
+        obv_smoothing,
     )
 
     # Use the last two bars to detect pull‑back completion
@@ -154,7 +208,7 @@ def generate_signal(
     cur = enriched.iloc[-1]
 
     if pd.isna(cur["atr"]) or cur["atr"] <= 0:
-        return {"action": "HOLD"}
+        return {"action": "HOLD", "actions": []}
 
     # Determine trend direction
     trend_long = cur["ema_fast"] > cur["ema_slow"] and cur["close"] > cur["ema_slow"]
@@ -165,46 +219,88 @@ def generate_signal(
     momentum_long_ok, momentum_short_ok, breakout_long_ok, breakout_short_ok = _evaluate_confirmation(
         enriched, cur, config
     )
+    volume_long_ok, volume_short_ok = _evaluate_volume_flow(cur)
+    macd_hist = cur.get("macd_hist")
+    macd_long_ok = pd.notna(macd_hist) and macd_hist > 0
+    macd_short_ok = pd.notna(macd_hist) and macd_hist < 0
+
+    pullback_tolerance = max(0.0, config.get("pullback_tolerance", 0.001))
+
+    def _within_band(value: float, target: float, tolerance: float) -> bool:
+        return target * (1 - tolerance) <= value <= target * (1 + tolerance)
+
+    pullback_long_ok = (
+        prev["close"] <= prev["ema_fast"] * (1 + pullback_tolerance)
+        and _within_band(cur["close"], cur["ema_fast"], pullback_tolerance)
+    )
+    pullback_short_ok = (
+        prev["close"] >= prev["ema_fast"] * (1 - pullback_tolerance)
+        and _within_band(cur["close"], cur["ema_fast"], pullback_tolerance)
+    )
+
+    long_score = _count_true(
+        [
+            trend_long,
+            pullback_long_ok,
+            rsi_long_ok,
+            stoch_long_ok,
+            momentum_long_ok,
+            breakout_long_ok,
+            macd_long_ok,
+            volume_long_ok,
+        ]
+    )
+    short_score = _count_true(
+        [
+            trend_short,
+            pullback_short_ok,
+            rsi_short_ok,
+            stoch_short_ok,
+            momentum_short_ok,
+            breakout_short_ok,
+            macd_short_ok,
+            volume_short_ok,
+        ]
+    )
+    long_threshold = max(3, config.get("long_score_threshold", 5))
+    short_threshold = max(3, config.get("short_score_threshold", 5))
 
     # Determine pull‑back completion conditions
     entry_long = (
-        current_position is None
+        allow_long
         and trend_long
-        and prev["close"] < prev["ema_fast"]
-        and cur["close"] > cur["ema_fast"]
-        and rsi_long_ok
-        and stoch_long_ok
-        and momentum_long_ok
-        and breakout_long_ok
+        and pullback_long_ok
+        and long_score >= long_threshold
     )
     entry_short = (
-        current_position is None
+        allow_short
         and trend_short
-        and prev["close"] > prev["ema_fast"]
-        and cur["close"] < cur["ema_fast"]
-        and rsi_short_ok
-        and stoch_short_ok
-        and momentum_short_ok
-        and breakout_short_ok
+        and pullback_short_ok
+        and short_score >= short_threshold
     )
 
+    actions: list[dict] = []
     if entry_long:
         stop_distance = cur["atr"]
         take_distance = stop_distance * config["risk_reward_ratio"]
-        return {
-            "action": "OPEN_LONG",
-            "entry_price": cur["close"],
-            "stop_distance": stop_distance,
-            "take_distance": take_distance,
-        }
+        actions.append(
+            {
+                "action": "OPEN_LONG",
+                "entry_price": cur["close"],
+                "stop_distance": stop_distance,
+                "take_distance": take_distance,
+            }
+        )
     if entry_short:
         stop_distance = cur["atr"]
         take_distance = stop_distance * config["risk_reward_ratio"]
-        return {
-            "action": "OPEN_SHORT",
-            "entry_price": cur["close"],
-            "stop_distance": stop_distance,
-            "take_distance": take_distance,
-        }
-    # Otherwise hold
-    return {"action": "HOLD"}
+        actions.append(
+            {
+                "action": "OPEN_SHORT",
+                "entry_price": cur["close"],
+                "stop_distance": stop_distance,
+                "take_distance": take_distance,
+            }
+        )
+    primary_action = actions[0]["action"] if actions else "HOLD"
+    return {"action": primary_action, "actions": actions}
