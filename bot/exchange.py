@@ -52,15 +52,33 @@ class BinanceExchange:
 
     Attributes:
         base_url: The REST endpoint to call (testnet or mainnet).
+        require_api_keys: If True, instantiation will fail when credentials are missing.
+        api_key/api_secret: Optional explicit credentials.  When omitted, they are
+            loaded from the environment.
         session: A persistent requests.Session for connection pooling.
     """
 
     base_url: str = TESTNET_URL
+    require_api_keys: bool = False
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
 
     def __post_init__(self) -> None:
-        self.api_key, self.api_secret = _get_api_keys()
+        if not self.api_key or not self.api_secret:
+            try:
+                self.api_key, self.api_secret = _get_api_keys()
+            except RuntimeError:
+                if self.require_api_keys:
+                    raise
+                self.api_key = None
+                self.api_secret = None
         self.session = requests.Session()
-        self.session.headers.update({"X-MBX-APIKEY": self.api_key})
+        if self.api_key:
+            self.session.headers.update({"X-MBX-APIKEY": self.api_key})
+
+    def _ensure_credentials(self) -> None:
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials are required for this operation")
 
     def _sign_params(self, params: Dict[str, Any]) -> str:
         """Generate the HMAC SHA256 signature required by Binance.
@@ -71,6 +89,7 @@ class BinanceExchange:
         Returns:
             The hexadecimal signature string.
         """
+        self._ensure_credentials()
         query_string = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         signature = hmac.new(
             self.api_secret.encode("utf-8"), query_string.encode("utf-8"), hashlib.sha256
@@ -94,6 +113,7 @@ class BinanceExchange:
         if params is None:
             params = {}
         # Add timestamp and signature
+        self._ensure_credentials()
         params["timestamp"] = int(time.time() * 1000)
         params["recvWindow"] = 5000
         signature = self._sign_params(params)
@@ -139,20 +159,21 @@ class BinanceExchange:
         """Return account balances and positions.
         Requires a signed request.
         """
+        self._ensure_credentials()
         return self._request("GET", "/fapi/v2/account", {})
 
     def create_order(
         self,
         symbol: str,
         side: str,
-        positionSide: str,
+        position_side: str,
         order_type: str,
         quantity: float,
         price: Optional[float] = None,
-        stopPrice: Optional[float] = None,
-        timeInForce: Optional[str] = None,
-        reduceOnly: bool = False,
-        closePosition: bool = False,
+        stop_price: Optional[float] = None,
+        time_in_force: Optional[str] = None,
+        reduce_only: bool = False,
+        close_position: bool = False,
     ) -> Any:
         """Place an order on Binance Futures.
 
@@ -171,19 +192,20 @@ class BinanceExchange:
         Returns:
             JSON response from Binance.
         """
+        self._ensure_credentials()
         params = {
             "symbol": symbol,
             "side": side,
-            "positionSide": positionSide,
+            "positionSide": position_side,
             "type": order_type,
             "quantity": quantity,
-            "reduceOnly": reduceOnly,
-            "closePosition": closePosition,
+            "reduceOnly": reduce_only,
+            "closePosition": close_position,
         }
         if price is not None:
             params["price"] = price
-        if stopPrice is not None:
-            params["stopPrice"] = stopPrice
-        if timeInForce is not None:
-            params["timeInForce"] = timeInForce
+        if stop_price is not None:
+            params["stopPrice"] = stop_price
+        if time_in_force is not None:
+            params["timeInForce"] = time_in_force
         return self._request("POST", "/fapi/v1/order", params)

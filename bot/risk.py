@@ -12,6 +12,7 @@ thoroughly tested before being used in live trading.
 
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 
@@ -36,8 +37,15 @@ def calculate_position_size(
         Quantity of the base asset to trade.
     """
     risk_amount = equity_usd * risk_percentage
-    # Avoid division by zero
-    if stop_distance <= 0 or entry_price <= 0:
+    if risk_amount <= 0:
+        return 0.0
+    # Avoid division by zero or invalid inputs
+    if (
+        stop_distance <= 0
+        or entry_price <= 0
+        or math.isnan(stop_distance)
+        or math.isnan(entry_price)
+    ):
         return 0.0
     position_notional = risk_amount / stop_distance
     quantity = position_notional / entry_price

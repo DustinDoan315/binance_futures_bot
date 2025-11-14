@@ -21,6 +21,13 @@ SCENARIOS = {
         "ema_fast": 50,
         "ema_slow": 200,
         "atr_period": 14,
+        "rsi_period": 14,
+        "rsi_long_threshold": 55,
+        "rsi_short_threshold": 45,
+        "slot_fraction": 1 / 50,
+        "macd_fast": 12,
+        "macd_slow": 26,
+        "macd_signal": 9,
     },
     "neutral": {
         "risk_percentage": 0.40,  # 40% of equity per trade
@@ -30,6 +37,13 @@ SCENARIOS = {
         "ema_fast": 30,
         "ema_slow": 100,
         "atr_period": 14,
+        "rsi_period": 14,
+        "rsi_long_threshold": 55,
+        "rsi_short_threshold": 45,
+        "slot_fraction": 1 / 50,
+        "macd_fast": 12,
+        "macd_slow": 26,
+        "macd_signal": 9,
     },
     "risky": {
         "risk_percentage": 0.75,  # 75% of equity per trade
@@ -39,6 +53,13 @@ SCENARIOS = {
         "ema_fast": 20,
         "ema_slow": 50,
         "atr_period": 14,
+        "rsi_period": 14,
+        "rsi_long_threshold": 60,
+        "rsi_short_threshold": 40,
+        "slot_fraction": 1 / 50,
+        "macd_fast": 12,
+        "macd_slow": 26,
+        "macd_signal": 9,
     },
 }
 

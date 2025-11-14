@@ -14,7 +14,7 @@ order parameters rather than calling the exchange.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from .exchange import BinanceExchange
 from .risk import calculate_position_size, compute_exit_prices
@@ -33,6 +33,81 @@ class OrderResult:
     entry_order: Dict[str, object]
     stop_order: Dict[str, object]
     take_order: Dict[str, object]
+
+
+def _place_live_orders(
+    exchange: BinanceExchange,
+    symbol: str,
+    side: str,
+    position_side: str,
+    qty: float,
+    stop_price: float,
+    take_price: float,
+) -> Tuple[Dict[str, object], Dict[str, object], Dict[str, object]]:
+    entry_resp = exchange.create_order(
+        symbol=symbol,
+        side=side,
+        position_side=position_side,
+        order_type="MARKET",
+        quantity=qty,
+    )
+    stop_resp = exchange.create_order(
+        symbol=symbol,
+        side="SELL" if side == "BUY" else "BUY",
+        position_side=position_side,
+        order_type="STOP_MARKET",
+        stop_price=stop_price,
+        quantity=qty,
+        reduce_only=True,
+        close_position=False,
+    )
+    take_resp = exchange.create_order(
+        symbol=symbol,
+        side="SELL" if side == "BUY" else "BUY",
+        position_side=position_side,
+        order_type="TAKE_PROFIT_MARKET",
+        stop_price=take_price,
+        quantity=qty,
+        reduce_only=True,
+        close_position=False,
+    )
+    return entry_resp, stop_resp, take_resp
+
+
+def _simulate_orders(
+    symbol: str,
+    side: str,
+    position_side: str,
+    qty: float,
+    entry_price: float,
+    stop_price: float,
+    take_price: float,
+) -> Tuple[Dict[str, object], Dict[str, object], Dict[str, object]]:
+    entry_resp = {
+        "symbol": symbol,
+        "side": side,
+        "positionSide": position_side,
+        "type": "MARKET",
+        "quantity": qty,
+        "price": entry_price,
+    }
+    stop_resp = {
+        "symbol": symbol,
+        "side": "SELL" if side == "BUY" else "BUY",
+        "positionSide": position_side,
+        "type": "STOP_MARKET",
+        "stopPrice": stop_price,
+        "quantity": qty,
+    }
+    take_resp = {
+        "symbol": symbol,
+        "side": "SELL" if side == "BUY" else "BUY",
+        "positionSide": position_side,
+        "type": "TAKE_PROFIT_MARKET",
+        "stopPrice": take_price,
+        "quantity": qty,
+    }
+    return entry_resp, stop_resp, take_resp
 
 
 def open_position(
@@ -92,60 +167,23 @@ def open_position(
     if live:
         if exchange is None:
             raise RuntimeError("Exchange client is None but live trading requested")
-        # Place the market entry order
-        entry_resp = exchange.create_order(
+        entry_resp, stop_resp, take_resp = _place_live_orders(
+            exchange=exchange,
             symbol=symbol,
             side=side,
-            positionSide=position_side,
-            order_type="MARKET",
-            quantity=qty,
-        )
-        # Stop‑loss
-        stop_resp = exchange.create_order(
-            symbol=symbol,
-            side="SELL" if side == "BUY" else "BUY",
-            positionSide=position_side,
-            order_type="STOP_MARKET",
-            stopPrice=stop_price,
-            quantity=qty,
-            reduceOnly=True,
-            closePosition=False,
-        )
-        # Take‑profit
-        take_resp = exchange.create_order(
-            symbol=symbol,
-            side="SELL" if side == "BUY" else "BUY",
-            positionSide=position_side,
-            order_type="TAKE_PROFIT_MARKET",
-            stopPrice=take_price,
-            quantity=qty,
-            reduceOnly=True,
-            closePosition=False,
+            position_side=position_side,
+            qty=qty,
+            stop_price=stop_price,
+            take_price=take_price,
         )
     else:
-        # Simulate responses
-        entry_resp = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": "MARKET",
-            "quantity": qty,
-            "price": entry_price,
-        }
-        stop_resp = {
-            "symbol": symbol,
-            "side": "SELL" if side == "BUY" else "BUY",
-            "positionSide": position_side,
-            "type": "STOP_MARKET",
-            "stopPrice": stop_price,
-            "quantity": qty,
-        }
-        take_resp = {
-            "symbol": symbol,
-            "side": "SELL" if side == "BUY" else "BUY",
-            "positionSide": position_side,
-            "type": "TAKE_PROFIT_MARKET",
-            "stopPrice": take_price,
-            "quantity": qty,
-        }
+        entry_resp, stop_resp, take_resp = _simulate_orders(
+            symbol=symbol,
+            side=side,
+            position_side=position_side,
+            qty=qty,
+            entry_price=entry_price,
+            stop_price=stop_price,
+            take_price=take_price,
+        )
     return OrderResult(entry_order=entry_resp, stop_order=stop_resp, take_order=take_resp)
