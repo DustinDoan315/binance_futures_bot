@@ -11,7 +11,7 @@ Every time a new candle closes it:
 
 1. Calculates short‑ and long‑term exponential moving averages (EMAs) and the average true range (ATR) over the most recent data.
 2. Computes a 14‑period **RSI** plus a **Stochastic oscillator** (14/3) to confirm momentum and overbought/oversold states.
-3. Uses these indicators to decide whether the market is trending up, trending down or ranging and generates a **signal** (open long, open short or stay flat) only when price resumes trending after a small pull‑back that aligns with the RSI and Stochastic filters.
+3. Looks back across the last 3–10 candles (default 5) to ensure EMA slopes and tiny breakouts agree before triggering an entry, so signals fire only when price resumes trending after a credible pull‑back.
 4. Calculates position size based on your account equity and a **risk percentage**.
 5. Splits the equity into **50 equal slots** and only risks one slot per order, so repeated signals never tie up the entire balance.
 6. Creates paired stop‑loss and take‑profit orders to cap downside and lock in profits.

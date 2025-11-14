@@ -39,6 +39,38 @@ def _calculate_stochastic(df: pd.DataFrame, k_period: int, d_period: int) -> pd.
     return pd.DataFrame({"stoch_k": k, "stoch_d": d}, index=df.index)
 
 
+def _evaluate_rsi(cur: pd.Series, config: dict) -> tuple[bool, bool]:
+    rsi_long_threshold = config.get("rsi_long_threshold", 55)
+    rsi_short_threshold = config.get("rsi_short_threshold", 45)
+    rsi_value = cur.get("rsi")
+    long_ok = pd.notna(rsi_value) and rsi_value >= rsi_long_threshold
+    short_ok = pd.notna(rsi_value) and rsi_value <= rsi_short_threshold
+    return long_ok, short_ok
+
+
+def _evaluate_stochastic(cur: pd.Series) -> tuple[bool, bool]:
+    stoch_k = cur.get("stoch_k")
+    stoch_d = cur.get("stoch_d")
+    long_ok = pd.notna(stoch_k) and pd.notna(stoch_d) and stoch_k > stoch_d and stoch_k < 80
+    short_ok = pd.notna(stoch_k) and pd.notna(stoch_d) and stoch_k < stoch_d and stoch_k > 20
+    return long_ok, short_ok
+
+
+def _evaluate_confirmation(
+    enriched: pd.DataFrame,
+    cur: pd.Series,
+    config: dict,
+) -> tuple[bool, bool, bool, bool]:
+    window = max(1, config.get("confirmation_window", 5))
+    recent = enriched.iloc[-window:]
+    ema_fast_slope = recent["ema_fast"].diff().mean()
+    ema_slow_slope = recent["ema_slow"].diff().mean()
+    momentum_long_ok = ema_fast_slope > 0 and ema_slow_slope > 0
+    momentum_short_ok = ema_fast_slope < 0 and ema_slow_slope < 0
+    breakout_long_ok = cur["close"] >= recent["high"].max()
+    breakout_short_ok = cur["close"] <= recent["low"].min()
+    return momentum_long_ok, momentum_short_ok, breakout_long_ok, breakout_short_ok
+
 def calculate_indicators(
     df: pd.DataFrame,
     ema_fast: int,
@@ -128,16 +160,11 @@ def generate_signal(
     trend_long = cur["ema_fast"] > cur["ema_slow"] and cur["close"] > cur["ema_slow"]
     trend_short = cur["ema_fast"] < cur["ema_slow"] and cur["close"] < cur["ema_slow"]
 
-    rsi_long_threshold = config.get("rsi_long_threshold", 55)
-    rsi_short_threshold = config.get("rsi_short_threshold", 45)
-    rsi_value = cur.get("rsi")
-    rsi_long_ok = pd.notna(rsi_value) and rsi_value >= rsi_long_threshold
-    rsi_short_ok = pd.notna(rsi_value) and rsi_value <= rsi_short_threshold
-
-    stoch_k = cur.get("stoch_k")
-    stoch_d = cur.get("stoch_d")
-    stoch_long_ok = pd.notna(stoch_k) and pd.notna(stoch_d) and stoch_k > stoch_d and stoch_k < 80
-    stoch_short_ok = pd.notna(stoch_k) and pd.notna(stoch_d) and stoch_k < stoch_d and stoch_k > 20
+    rsi_long_ok, rsi_short_ok = _evaluate_rsi(cur, config)
+    stoch_long_ok, stoch_short_ok = _evaluate_stochastic(cur)
+    momentum_long_ok, momentum_short_ok, breakout_long_ok, breakout_short_ok = _evaluate_confirmation(
+        enriched, cur, config
+    )
 
     # Determine pull‑back completion conditions
     entry_long = (
@@ -147,6 +174,8 @@ def generate_signal(
         and cur["close"] > cur["ema_fast"]
         and rsi_long_ok
         and stoch_long_ok
+        and momentum_long_ok
+        and breakout_long_ok
     )
     entry_short = (
         current_position is None
@@ -155,6 +184,8 @@ def generate_signal(
         and cur["close"] < cur["ema_fast"]
         and rsi_short_ok
         and stoch_short_ok
+        and momentum_short_ok
+        and breakout_short_ok
     )
 
     if entry_long:

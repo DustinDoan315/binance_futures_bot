@@ -27,6 +27,7 @@ SCENARIOS = {
         "slot_fraction": 1 / 50,
         "stoch_k_period": 14,
         "stoch_d_period": 3,
+        "confirmation_window": 5,
     },
     "neutral": {
         "risk_percentage": 0.40,  # 40% of equity per trade
@@ -42,6 +43,7 @@ SCENARIOS = {
         "slot_fraction": 1 / 50,
         "stoch_k_period": 14,
         "stoch_d_period": 3,
+        "confirmation_window": 5,
     },
     "risky": {
         "risk_percentage": 0.75,  # 75% of equity per trade
@@ -57,6 +59,7 @@ SCENARIOS = {
         "slot_fraction": 1 / 50,
         "stoch_k_period": 14,
         "stoch_d_period": 3,
+        "confirmation_window": 5,
     },
 }
 
