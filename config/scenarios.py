@@ -25,9 +25,8 @@ SCENARIOS = {
         "rsi_long_threshold": 55,
         "rsi_short_threshold": 45,
         "slot_fraction": 1 / 50,
-        "macd_fast": 12,
-        "macd_slow": 26,
-        "macd_signal": 9,
+        "stoch_k_period": 14,
+        "stoch_d_period": 3,
     },
     "neutral": {
         "risk_percentage": 0.40,  # 40% of equity per trade
@@ -41,9 +40,8 @@ SCENARIOS = {
         "rsi_long_threshold": 55,
         "rsi_short_threshold": 45,
         "slot_fraction": 1 / 50,
-        "macd_fast": 12,
-        "macd_slow": 26,
-        "macd_signal": 9,
+        "stoch_k_period": 14,
+        "stoch_d_period": 3,
     },
     "risky": {
         "risk_percentage": 0.75,  # 75% of equity per trade
@@ -57,9 +55,8 @@ SCENARIOS = {
         "rsi_long_threshold": 60,
         "rsi_short_threshold": 40,
         "slot_fraction": 1 / 50,
-        "macd_fast": 12,
-        "macd_slow": 26,
-        "macd_signal": 9,
+        "stoch_k_period": 14,
+        "stoch_d_period": 3,
     },
 }
 

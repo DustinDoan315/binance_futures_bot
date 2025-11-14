@@ -30,17 +30,13 @@ def _calculate_rsi(series: pd.Series, period: int) -> pd.Series:
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(50)
 
-
-def _calculate_macd(series: pd.Series, fast: int, slow: int, signal: int) -> pd.DataFrame:
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram = macd_line - signal_line
-    return pd.DataFrame(
-        {"macd": macd_line, "macd_signal": signal_line, "macd_hist": histogram},
-        index=series.index,
-    )
+def _calculate_stochastic(df: pd.DataFrame, k_period: int, d_period: int) -> pd.DataFrame:
+    lowest_low = df["low"].rolling(window=k_period).min()
+    highest_high = df["high"].rolling(window=k_period).max()
+    k = ((df["close"] - lowest_low) / (highest_high - lowest_low).replace(0, pd.NA)) * 100
+    k = k.fillna(50)
+    d = k.rolling(window=d_period).mean().fillna(50)
+    return pd.DataFrame({"stoch_k": k, "stoch_d": d}, index=df.index)
 
 
 def calculate_indicators(
@@ -49,9 +45,8 @@ def calculate_indicators(
     ema_slow: int,
     atr_period: int,
     rsi_period: int,
-    macd_fast: int,
-    macd_slow: int,
-    macd_signal: int,
+    stoch_k_period: int,
+    stoch_d_period: int,
 ) -> pd.DataFrame:
     """Compute EMA and ATR indicators.
 
@@ -77,8 +72,8 @@ def calculate_indicators(
     # ATR
     result["atr"] = true_range.rolling(window=atr_period).mean()
     result["rsi"] = _calculate_rsi(result["close"], rsi_period)
-    macd_df = _calculate_macd(result["close"], macd_fast, macd_slow, macd_signal)
-    result = pd.concat([result, macd_df], axis=1)
+    stoch_df = _calculate_stochastic(result, stoch_k_period, stoch_d_period)
+    result = pd.concat([result, stoch_df], axis=1)
     return result
 
 
@@ -110,18 +105,16 @@ def generate_signal(
     ema_slow = config["ema_slow"]
     atr_period = config.get("atr_period", 14)
     rsi_period = config.get("rsi_period", 14)
-    macd_fast = config.get("macd_fast", 12)
-    macd_slow = config.get("macd_slow", 26)
-    macd_signal = config.get("macd_signal", 9)
+    stoch_k_period = config.get("stoch_k_period", 14)
+    stoch_d_period = config.get("stoch_d_period", 3)
     enriched = calculate_indicators(
         df,
         ema_fast,
         ema_slow,
         atr_period,
         rsi_period,
-        macd_fast,
-        macd_slow,
-        macd_signal,
+        stoch_k_period,
+        stoch_d_period,
     )
 
     # Use the last two bars to detect pull‑back completion
@@ -141,10 +134,10 @@ def generate_signal(
     rsi_long_ok = pd.notna(rsi_value) and rsi_value >= rsi_long_threshold
     rsi_short_ok = pd.notna(rsi_value) and rsi_value <= rsi_short_threshold
 
-    macd_value = cur.get("macd")
-    macd_signal_value = cur.get("macd_signal")
-    macd_long_ok = pd.notna(macd_value) and pd.notna(macd_signal_value) and macd_value > macd_signal_value
-    macd_short_ok = pd.notna(macd_value) and pd.notna(macd_signal_value) and macd_value < macd_signal_value
+    stoch_k = cur.get("stoch_k")
+    stoch_d = cur.get("stoch_d")
+    stoch_long_ok = pd.notna(stoch_k) and pd.notna(stoch_d) and stoch_k > stoch_d and stoch_k < 80
+    stoch_short_ok = pd.notna(stoch_k) and pd.notna(stoch_d) and stoch_k < stoch_d and stoch_k > 20
 
     # Determine pull‑back completion conditions
     entry_long = (
@@ -153,7 +146,7 @@ def generate_signal(
         and prev["close"] < prev["ema_fast"]
         and cur["close"] > cur["ema_fast"]
         and rsi_long_ok
-        and macd_long_ok
+        and stoch_long_ok
     )
     entry_short = (
         current_position is None
@@ -161,7 +154,7 @@ def generate_signal(
         and prev["close"] > prev["ema_fast"]
         and cur["close"] < cur["ema_fast"]
         and rsi_short_ok
-        and macd_short_ok
+        and stoch_short_ok
     )
 
     if entry_long:
